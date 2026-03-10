@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fractal Tree</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: radial-gradient(ellipse at bottom, #0d1b2a 0%, #0a0f1e 60%, #000005 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+
+    #ui {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 14px;
+      z-index: 10;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .ctrl {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 24px;
+      padding: 6px 16px;
+      color: #cde;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      backdrop-filter: blur(8px);
+    }
+
+    .ctrl label { white-space: nowrap; }
+
+    .ctrl input[type=range] {
+      width: 90px;
+      accent-color: #6ef;
+      cursor: pointer;
+    }
+
+    #btn-restart {
+      background: rgba(100,220,140,0.15);
+      border: 1px solid rgba(100,220,140,0.4);
+      border-radius: 24px;
+      padding: 6px 20px;
+      color: #8feea0;
+      font-size: 13px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: background 0.2s;
+    }
+    #btn-restart:hover { background: rgba(100,220,140,0.28); }
+
+    #info {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(150,200,255,0.35);
+      font-size: 11px;
+      letter-spacing: 1px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <button id="btn-restart">🌱 Regrow</button>
+  <div class="ctrl">
+    <label>Depth</label>
+    <input type="range" id="sl-depth" min="5" max="13" value="10">
+    <span id="lbl-depth">10</span>
+  </div>
+  <div class="ctrl">
+    <label>Angle</label>
+    <input type="range" id="sl-angle" min="10" max="50" value="25">
+    <span id="lbl-angle">25°</span>
+  </div>
+  <div class="ctrl">
+    <label>Sway</label>
+    <input type="range" id="sl-sway" min="0" max="100" value="50">
+  </div>
+  <div class="ctrl">
+    <label>Speed</label>
+    <input type="range" id="sl-speed" min="1" max="10" value="4">
+  </div>
+</div>
+
+<div id="info">FRACTAL TREE &nbsp;·&nbsp; HTML / CSS / JS</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+
+  /* ── settings ── */
+  let CFG = {
+    maxDepth : 10,
+    angle    : 25,       // branch split angle (degrees)
+    swayAmt  : 0.50,     // 0‑1
+    speed    : 4,        // 1‑10
+    lenRatio : 0.68,     // child / parent length
+    trunkLen : 0,        // computed on resize
+    trunkW   : 14,
+  };
+
+  /* ── sliders ── */
+  function bindSlider(id, lblId, key, fmt) {
+    const sl  = document.getElementById(id);
+    const lbl = lblId ? document.getElementById(lblId) : null;
+    sl.addEventListener('input', () => {
+      CFG[key] = +sl.value;
+      if (lbl) lbl.textContent = fmt ? fmt(sl.value) : sl.value;
+      rebuild();
+    });
+    if (lbl) lbl.textContent = fmt ? fmt(sl.value) : sl.value;
+  }
+  bindSlider('sl-depth', 'lbl-depth', 'maxDepth');
+  bindSlider('sl-angle', 'lbl-angle', 'angle', v => v + '°');
+  bindSlider('sl-sway',  null,        'swayAmt',  v => v / 100);
+  document.getElementById('sl-sway').addEventListener('input', e => { CFG.swayAmt = e.target.value / 100; });
+  bindSlider('sl-speed', null,        'speed');
+  document.getElementById('btn-restart').addEventListener('click', rebuild);
+
+  /* ── resize ── */
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    CFG.trunkLen  = Math.min(canvas.height * 0.25, 220);
+  }
+  window.addEventListener('resize', () => { resize(); rebuild(); });
+  resize();
+
+  /* ────────────────────────────────────────────
+     TREE DATA  (built once, animated over time)
+  ─────────────────────────────────────────────*/
+  let branches = [];   // { x1,y1,x2,y2, depth, length, angle, progress(0→1), born }
+  let leaves   = [];   // { x,y, size, color, alpha, born, angle }
+  let startTime;
+  let raf;
+
+  function deg2rad(d) { return d * Math.PI / 180; }
+
+  function buildTree(x, y, angle, length, depth, delay) {
+    if (depth > CFG.maxDepth || length < 1.5) return;
+
+    const x2 = x + Math.sin(deg2rad(angle)) * length;
+    const y2 = y - Math.cos(deg2rad(angle)) * length;
+
+    branches.push({
+      x1: x, y1: y, x2, y2,
+      depth,
+      length,
+      angle,
+      progress: 0,
+      born: delay
+    });
+
+    const childLen   = length  * CFG.lenRatio;
+    const childDelay = delay   + length / (CFG.speed * 12);
+
+    if (depth < CFG.maxDepth) {
+      buildTree(x2, y2, angle - CFG.angle, childLen, depth + 1, childDelay);
+      buildTree(x2, y2, angle + CFG.angle, childLen, depth + 1, childDelay);
+    }
+
+    if (depth >= CFG.maxDepth - 1) {
+      const colors = ['#3ddc68','#5de87a','#7cf090','#a0f5ae','#b8ffc4','#d4ffda'];
+      leaves.push({
+        x: x2, y: y2,
+        size:  3 + Math.random() * 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        alpha: 0,
+        born:  childDelay + 0.05,
+        angle: Math.random() * 360,
+        wobblePhase: Math.random() * Math.PI * 2,
+        wobbleAmt:   1.5 + Math.random() * 2.5
+      });
+    }
+  }
+
+  function rebuild() {
+    branches = [];
+    leaves   = [];
+    startTime = performance.now();
+
+    const cx = canvas.width  / 2;
+    const cy = canvas.height - 10;
+    buildTree(cx, cy, 0, CFG.trunkLen, 1, 0);
+  }
+
+  /* ── sway helpers ── */
+  function swayOffset(branch, t) {
+    /* Each branch swings based on its angle and depth; deeper = more sway */
+    const freq = 0.5 + branch.depth * 0.05;
+    const phase = branch.angle * 0.03;
+    const amp   = CFG.swayAmt * branch.depth * 0.6;
+    return amp * Math.sin(t * freq + phase);
+  }
+
+  /* ── colour by depth ── */
+  function branchColor(depth, maxD) {
+    const t = depth / maxD;
+    // trunk: warm brown → branches: olive → tips: green
+    const r = Math.round(110 - t * 60);
+    const g = Math.round(70  + t * 80);
+    const b = Math.round(30  + t * 20);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function branchWidth(depth) {
+    return Math.max(0.6, CFG.trunkW * Math.pow(CFG.lenRatio, depth - 1));
+  }
+
+  /* ── draw frame ── */
+  function draw(now) {
+    const elapsed = (now - startTime) / 1000;   // seconds
+    const t       = now / 1000;                 // for sway
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    /* background stars */
+    drawStars(t);
+
+    /* branches */
+    for (const b of branches) {
+      const age = elapsed - b.born;
+      if (age < 0) continue;
+
+      const growDur = b.length / (CFG.speed * 12);
+      b.progress    = Math.min(1, age / Math.max(growDur, 0.001));
+
+      const sway = swayOffset(b, t);
+      const dx   = (b.x2 - b.x1) + sway;
+      const dy   = (b.y2 - b.y1);
+
+      const px = b.x1 + dx * b.progress;
+      const py = b.y1 + dy * b.progress;
+
+      ctx.beginPath();
+      ctx.moveTo(b.x1, b.y1);
+      ctx.lineTo(px, py);
+      ctx.strokeStyle = branchColor(b.depth, CFG.maxDepth);
+      ctx.lineWidth   = branchWidth(b.depth);
+      ctx.lineCap     = 'round';
+      ctx.stroke();
+    }
+
+    /* leaves */
+    for (const lf of leaves) {
+      const age = elapsed - lf.born;
+      if (age < 0) continue;
+      lf.alpha = Math.min(1, age * 2);
+
+      const sway = CFG.swayAmt * lf.wobbleAmt * Math.sin(t * 0.9 + lf.wobblePhase);
+      const x    = lf.x + sway;
+      const y    = lf.y + Math.sin(t * 1.3 + lf.wobblePhase) * CFG.swayAmt * 1.2;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(deg2rad(lf.angle + sway * 4));
+      ctx.globalAlpha = lf.alpha;
+      ctx.fillStyle   = lf.color;
+      ctx.shadowColor = lf.color;
+      ctx.shadowBlur  = 8;
+
+      /* teardrop leaf */
+      ctx.beginPath();
+      ctx.moveTo(0, -lf.size);
+      ctx.quadraticCurveTo( lf.size * 0.9,  0,           0,  lf.size * 0.7);
+      ctx.quadraticCurveTo(-lf.size * 0.9,  0,           0, -lf.size);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    /* seed glow at root */
+    const cx   = canvas.width / 2;
+    const cy   = canvas.height - 10;
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 24);
+    glow.addColorStop(0,   'rgba(90,220,120,0.55)');
+    glow.addColorStop(1,   'rgba(90,220,120,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+
+    raf = requestAnimationFrame(draw);
+  }
+
+  /* ── stars ── */
+  const STARS = Array.from({ length: 120 }, () => ({
+    x: Math.random(),
+    y: Math.random() * 0.75,
+    r: 0.4 + Math.random() * 1.2,
+    p: Math.random() * Math.PI * 2
+  }));
+
+  function drawStars(t) {
+    for (const s of STARS) {
+      const alpha = 0.3 + 0.3 * Math.sin(t * 1.2 + s.p);
+      ctx.beginPath();
+      ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,220,255,${alpha})`;
+      ctx.fill();
+    }
+  }
+
+  /* ── kick off ── */
+  rebuild();
+  raf = requestAnimationFrame(draw);
+
+})();
+</script>
+</body>
+</html>

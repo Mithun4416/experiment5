@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fractal Tree from Seed</title>
+  <style>
+    :root{
+      --bg1:#0f172a;
+      --bg2:#1e293b;
+      --ground:#1f3b2f;
+      --seed:#7c4a2d;
+      --leaf1:#65d36e;
+      --leaf2:#8bf08a;
+      --glow:#b6ffb5;
+    }
+
+    html,body{
+      margin:0;
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      background: radial-gradient(circle at 50% 80%, #233b2f 0%, var(--bg2) 45%, var(--bg1) 100%);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    canvas{
+      display:block;
+      width:100vw;
+      height:100vh;
+    }
+
+    .hint{
+      position:fixed;
+      left:50%;
+      bottom:14px;
+      transform:translateX(-50%);
+      color:#d7ffe2;
+      font-size:12px;
+      opacity:.8;
+      letter-spacing:.3px;
+      user-select:none;
+      background:rgba(0,0,0,.2);
+      padding:6px 10px;
+      border-radius:999px;
+      backdrop-filter: blur(3px);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div class="hint">Click or tap to regrow 🌱</div>
+
+  <script>
+    const canvas = document.getElementById('scene');
+    const ctx = canvas.getContext('2d');
+
+    let w = 0, h = 0, dpr = Math.max(1, window.devicePixelRatio || 1);
+    let startTime = 0;
+    let seedPulse = 0;
+
+    // Tree configuration
+    const cfg = {
+      maxDepth: 9,
+      baseLen: 105,
+      lenShrink: 0.72,
+      baseThickness: 10,
+      thicknessShrink: 0.72,
+      baseAngleSpread: 0.55,  // radians
+      growthSpeed: 1.0,       // global time multiplier
+      segmentGrowDuration: 420,  // ms per segment
+      levelDelay: 170,        // delay per depth level
+      swayAmpBase: 0.08,      // radians
+      swayFreq: 0.0012,       // time scale
+      leafSize: 6
+    };
+
+    const trunkColor = '#6e4a2f';
+
+    function resize() {
+      w = window.innerWidth;
+      h = window.innerHeight;
+      dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      generateTree();
+    }
+
+    let tree = [];
+    let leaves = [];
+    let rootX = 0, rootY = 0;
+
+    function rand(min, max){ return min + Math.random()*(max-min); }
+
+    function generateTree() {
+      tree = [];
+      leaves = [];
+      rootX = w * 0.5;
+      rootY = h * 0.88;
+
+      const baseLen = Math.min(cfg.baseLen, h * 0.19);
+
+      buildBranch({
+        x: rootX,
+        y: rootY,
+        angle: -Math.PI / 2,
+        len: baseLen,
+        thickness: cfg.baseThickness,
+        depth: 0,
+        parentDelay: 0,
+        sideBias: rand(-0.06, 0.06)
+      });
+      startTime = performance.now();
+      seedPulse = 1;
+    }
+
+    function buildBranch(b) {
+      tree.push(b);
+
+      if (b.depth >= cfg.maxDepth || b.len < 5) {
+        leaves.push({
+          x: 0, y: 0,  // resolved dynamically at draw time
+          branch: b,
+          appearAt: b.parentDelay + cfg.segmentGrowDuration + b.depth * 40,
+          size: cfg.leafSize * (0.9 + Math.random()*0.7),
+          hueShift: rand(-10, 12),
+          phase: rand(0, Math.PI * 2)
+        });
+        return;
+      }
+
+      // Slightly random spread and asymmetry
+      const spread = cfg.baseAngleSpread * (0.92 + Math.random()*0.2);
+      const twist = rand(-0.12, 0.12) + b.sideBias * 0.5;
+
+      const nextLen = b.len * (cfg.lenShrink * (0.95 + Math.random()*0.1));
+      const nextThickness = b.thickness * cfg.thicknessShrink;
+
+      const childDelay = b.parentDelay + cfg.segmentGrowDuration + cfg.levelDelay;
+
+      // Left child
+      buildBranch({
+        x: 0, y: 0, // computed from parent tip
+        angle: b.angle - spread + twist,
+        len: nextLen,
+        thickness: nextThickness,
+        depth: b.depth + 1,
+        parentDelay: childDelay,
+        parent: b,
+        sideBias: b.sideBias + rand(-0.04, 0.01)
+      });
+
+      // Right child
+      buildBranch({
+        x: 0, y: 0,
+        angle: b.angle + spread + twist,
+        len: nextLen * (0.96 + Math.random()*0.07),
+        thickness: nextThickness * (0.96 + Math.random()*0.08),
+        depth: b.depth + 1,
+        parentDelay: childDelay + rand(-40, 40),
+        parent: b,
+        sideBias: b.sideBias + rand(-0.01, 0.04)
+      });
+
+      // Optional center twig occasionally
+      if (Math.random() < 0.22 && b.depth > 1 && b.depth < cfg.maxDepth - 1) {
+        buildBranch({
+          x: 0, y: 0,
+          angle: b.angle + rand(-0.18, 0.18),
+          len: nextLen * 0.78,
+          thickness: nextThickness * 0.8,
+          depth: b.depth + 1,
+          parentDelay: childDelay + 60,
+          parent: b,
+          sideBias: b.sideBias * 0.7
+        });
+      }
+    }
+
+    // Resolve absolute start position and swayed angle recursively
+    function resolveBranchTransform(branch, t) {
+      if (!branch.parent) {
+        const sway = Math.sin(t * cfg.swayFreq + branch.depth * 0.7) * cfg.swayAmpBase;
+        return { sx: rootX, sy: rootY, ang: branch.angle + sway * 0.35 };
+      }
+
+      const p = resolveBranchTransform(branch.parent, t);
+      const pGrow = growthProgress(branch.parent, t);
+      const pLenNow = branch.parent.len * pGrow;
+
+      const px = p.sx + Math.cos(p.ang) * pLenNow;
+      const py = p.sy + Math.sin(p.ang) * pLenNow;
+
+      const depthFactor = Math.max(0.25, 1 - branch.depth / (cfg.maxDepth + 1));
+      const localSway = Math.sin(t * cfg.swayFreq * (1.2 + branch.depth * 0.12) + branch.depth * 0.9)
+                        * cfg.swayAmpBase * depthFactor;
+
+      return {
+        sx: px,
+        sy: py,
+        ang: branch.angle + localSway
+      };
+    }
+
+    function growthProgress(branch, t) {
+      const elapsed = (t - startTime) * cfg.growthSpeed;
+      const local = elapsed - branch.parentDelay;
+      return Math.max(0, Math.min(1, local / cfg.segmentGrowDuration));
+    }
+
+    function drawGround() {
+      const gy = h * 0.89;
+      const grad = ctx.createLinearGradient(0, gy - 80, 0, h);
+      grad.addColorStop(0, 'rgba(40,70,50,0)');
+      grad.addColorStop(1, 'rgba(22,48,35,0.95)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, gy - 80, w, h - gy + 100);
+
+      ctx.beginPath();
+      ctx.ellipse(rootX, gy + 10, 120, 30, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fill();
+    }
+
+    function drawSeed(t) {
+      const p = Math.max(0, seedPulse);
+      seedPulse *= 0.985;
+
+      const pulse = 1 + Math.sin(t * 0.012) * 0.06 + p * 0.25;
+      const sx = rootX;
+      const sy = rootY + 8;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.scale(pulse, pulse);
+
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 8, 5, -0.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#8e5a3b';
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.ellipse(1, -1, 3, 1.5, -0.2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,220,170,0.35)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawBranch(branch, t) {
+      const tr = resolveBranchTransform(branch, t);
+      const g = growthProgress(branch, t);
+      if (g <= 0) return;
+
+      const ex = tr.sx + Math.cos(tr.ang) * branch.len * g;
+      const ey = tr.sy + Math.sin(tr.ang) * branch.len * g;
+
+      const barkVar = 8 * Math.sin(branch.depth * 0.8 + t * 0.0005);
+      const col = `rgb(${110 + barkVar}, ${74 + barkVar*0.5}, ${47 + barkVar*0.2})`;
+
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(0.7, branch.thickness * (0.65 + 0.35 * g));
+      ctx.lineCap = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(tr.sx, tr.sy);
+
+      // subtle curve for organic feel
+      const cx = (tr.sx + ex) * 0.5 + Math.cos(tr.ang - Math.PI/2) * branch.len * 0.06;
+      const cy = (tr.sy + ey) * 0.5 + Math.sin(tr.ang - Math.PI/2) * branch.len * 0.06;
+      ctx.quadraticCurveTo(cx, cy, ex, ey);
+      ctx.stroke();
+    }
+
+    function drawLeaf(leaf, t) {
+      const elapsed = (t - startTime) * cfg.growthSpeed;
+      if (elapsed < leaf.appearAt) return;
+
+      const tr = resolveBranchTransform(leaf.branch, t);
+      const tipX = tr.sx + Math.cos(tr.ang) * leaf.branch.len;
+      const tipY = tr.sy + Math.sin(tr.ang) * leaf.branch.len;
+
+      const life = Math.min(1, (elapsed - leaf.appearAt) / 380);
+      const sway = Math.sin(t * 0.003 + leaf.phase) * 0.25;
+      const s = leaf.size * (0.2 + 0.8 * life);
+
+      ctx.save();
+      ctx.translate(tipX, tipY);
+      ctx.rotate(tr.ang + sway);
+
+      // glow
+      ctx.globalAlpha = 0.18 * life;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s * 1.8, s * 1.2, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(182,255,181,0.45)';
+      ctx.fill();
+
+      // leaf body
+      ctx.globalAlpha = 0.95;
+      const h1 = 115 + leaf.hueShift;
+      const h2 = 135 + leaf.hueShift;
+
+      const grad = ctx.createLinearGradient(-s, 0, s, 0);
+      grad.addColorStop(0, `hsl(${h1} 60% 52%)`);
+      grad.addColorStop(1, `hsl(${h2} 80% 68%)`);
+
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s, s * 0.56, 0, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // tiny vein
+      ctx.strokeStyle = 'rgba(230,255,230,0.45)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.75, 0);
+      ctx.lineTo(s * 0.75, 0);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function animate(t) {
+      ctx.clearRect(0, 0, w, h);
+
+      drawGround();
+      drawSeed(t);
+
+      // Draw branches in depth order (thicker first)
+      tree
+        .slice()
+        .sort((a,b) => a.depth - b.depth)
+        .forEach(b => drawBranch(b, t));
+
+      leaves.forEach(l => drawLeaf(l, t));
+
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', resize);
+    window.addEventListener('click', generateTree);
+    window.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      generateTree();
+    }, { passive:false });
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

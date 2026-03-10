@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Growing Fractal Tree</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0b0c10; /* Dark background to make the tree pop */
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        .instruction {
+            position: absolute;
+            top: 20px;
+            text-align: center;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="instruction">Growing Fractal Tree<br><small>Watch it grow and sway</small></div>
+    <canvas id="treeCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('treeCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Resize canvas to fill the screen
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Tree configuration
+        const maxDepth = 10;                // How many recursive splits
+        const timePerDepth = 600;           // ms for a branch to fully grow
+        const overlapFactor = 0.5;          // How early child branches start growing (0-1)
+        const branchAngle = 0.45;           // Angle of the splits (in radians)
+        const lengthFactor = 0.73;          // How much shorter child branches are
+        const startTime = Date.now();
+
+        // The recursive function to draw branches
+        function drawBranch(x, y, len, angle, depth, timeElapsed) {
+            // Calculate growth progress for this specific branch
+            const startTimeForBranch = depth * timePerDepth * overlapFactor;
+            const growthDuration = timePerDepth;
+            let growth = (timeElapsed - startTimeForBranch) / growthDuration;
+            
+            // If it's not time for this branch to exist yet, stop drawing
+            if (growth <= 0) return;
+            // Clamp growth to 1 (fully grown)
+            if (growth > 1) growth = 1;
+
+            // Calculate gentle swaying motion
+            // Sway increases with depth, making the tips sway more than the trunk
+            const swayAmount = 0.015 * depth;
+            const swaySpeed = 0.0015;
+            // Adding 'x' to the sine input creates an organic offset between left/right branches
+            const sway = Math.sin(timeElapsed * swaySpeed + x * 0.01) * swayAmount * growth;
+            const currentAngle = angle + sway;
+
+            // Calculate the current length based on growth progress
+            const currentLen = len * growth;
+            const endX = x + Math.cos(currentAngle) * currentLen;
+            const endY = y + Math.sin(currentAngle) * currentLen;
+
+            // Draw the branch
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(endX, endY);
+            
+            // Branch styling (thicker at base, thinner at tips)
+            ctx.lineWidth = Math.max(0.5, (maxDepth - depth) * 1.5);
+            
+            // Color gradient from dark brown trunk to green tips
+            const r = 110 - depth * 10;
+            const g = 60 + depth * 15;
+            const b = 40;
+            ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            
+            // Fade in the branch as it grows
+            ctx.globalAlpha = Math.min(1, growth * 2); 
+            ctx.stroke();
+            ctx.globalAlpha = 1; // Reset alpha
+
+            // If we've reached the final depth and it's mostly grown, sprout leaves
+            if (depth === maxDepth && growth > 0.4) {
+                // Leaf growth spans from 0.4 to 1.0 of the branch growth
+                const leafGrowth = (growth - 0.4) / 0.6; 
+                ctx.beginPath();
+                ctx.arc(endX, endY, 4 * leafGrowth, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(130, 220, 100, ${leafGrowth * 0.9})`;
+                ctx.fill();
+            }
+
+            // Recursively draw child branches if this branch has grown enough
+            if (growth > 0.2 && depth < maxDepth) {
+                const childLen = len * lengthFactor;
+                
+                // Right branch
+                drawBranch(endX, endY, childLen, currentAngle + branchAngle, depth + 1, timeElapsed);
+                // Left branch
+                drawBranch(endX, endY, childLen, currentAngle - branchAngle, depth + 1, timeElapsed);
+            }
+        }
+
+        // Main animation loop
+        function animate() {
+            // Clear screen with a slight trail effect (alpha < 1) for smoother visuals
+            ctx.fillStyle = '#0b0c10';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const timeElapsed = Date.now() - startTime;
+            
+            // Calculate base values
+            const startX = canvas.width / 2;
+            const startY = canvas.height;
+            const initialLength = Math.min(canvas.height * 0.25, 200); // Scale to screen
+            const initialAngle = -Math.PI / 2; // Pointing straight up
+
+            // Draw the seed/ground pulse briefly at the start
+            if (timeElapsed < 2000) {
+                const seedAlpha = 1 - (timeElapsed / 2000);
+                ctx.beginPath();
+                ctx.ellipse(startX, startY, 40, 10, 0, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(100, 80, 50, ${seedAlpha})`;
+                ctx.fill();
+            }
+
+            // Begin recursive tree drawing
+            drawBranch(startX, startY, initialLength, initialAngle, 0, timeElapsed);
+
+            requestAnimationFrame(animate);
+        }
+
+        // Start the animation
+        animate();
+    </script>
+</body>
+</html>

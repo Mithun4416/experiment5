@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Robotics Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a1a;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    color: #c8d6e5;
+  }
+
+  canvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  #ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #controls {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(10, 10, 30, 0.88);
+    border: 1px solid rgba(100, 120, 200, 0.25);
+    border-radius: 14px;
+    padding: 18px 22px;
+    pointer-events: all;
+    backdrop-filter: blur(12px);
+    width: 260px;
+    z-index: 20;
+  }
+
+  #controls h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #7ec8e3;
+    margin-bottom: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .ctrl-group {
+    margin-bottom: 12px;
+  }
+
+  .ctrl-group label {
+    display: block;
+    font-size: 11px;
+    color: #8899aa;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .ctrl-group select,
+  .ctrl-group input[type="range"] {
+    width: 100%;
+    background: rgba(30, 30, 60, 0.7);
+    border: 1px solid rgba(100, 120, 200, 0.2);
+    border-radius: 6px;
+    color: #c8d6e5;
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .ctrl-group input[type="range"] {
+    -webkit-appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(50, 50, 100, 0.6);
+    border: none;
+    padding: 0;
+  }
+
+  .ctrl-group input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #7ec8e3;
+    cursor: pointer;
+    border: 2px solid #0a0a1a;
+  }
+
+  .range-val {
+    float: right;
+    font-size: 11px;
+    color: #7ec8e3;
+  }
+
+  #legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: rgba(10, 10, 30, 0.88);
+    border: 1px solid rgba(100, 120, 200, 0.25);
+    border-radius: 14px;
+    padding: 14px 18px;
+    pointer-events: none;
+    backdrop-filter: blur(12px);
+    z-index: 20;
+  }
+
+  #legend h3 {
+    font-size: 12px;
+    color: #7ec8e3;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+    font-size: 12px;
+  }
+
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 8px;
+    border: 1.5px solid rgba(255,255,255,0.15);
+  }
+
+  #stats {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: rgba(10, 10, 30, 0.88);
+    border: 1px solid rgba(100, 120, 200, 0.25);
+    border-radius: 14px;
+    padding: 14px 18px;
+    pointer-events: none;
+    backdrop-filter: blur(12px);
+    z-index: 20;
+    min-width: 180px;
+  }
+
+  #stats h3 {
+    font-size: 12px;
+    color: #7ec8e3;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 3px;
+  }
+
+  .stat-label { color: #8899aa; }
+  .stat-value { color: #e8e8f0; font-weight: 600; }
+
+  #mode-badge {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 22px;
+    font-weight: 700;
+    color: #7ec8e3;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+    text-shadow: 0 0 30px rgba(126, 200, 227, 0.5);
+    z-index: 20;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="trail-canvas"></canvas>
+<canvas id="main-canvas"></canvas>
+
+<div id="ui-overlay">
+  <div id="stats">
+    <h3>📊 Swarm Stats</h3>
+    <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value" id="s-agents">0</span></div>
+    <div class="stat-row"><span class="stat-label">Avg Speed</span><span class="stat-value" id="s-speed">0</span></div>
+    <div class="stat-row"><span class="stat-label">Cohesion</span><span class="stat-value" id="s-cohesion">0%</span></div>
+    <div class="stat-row"><span class="stat-label">Formation</span><span class="stat-value" id="s-formation">—</span></div>
+    <div class="stat-row"><span class="stat-label">Time</span><span class="stat-value" id="s-time">0s</span></div>
+  </div>
+
+  <div id="controls">
+    <h2>⚙ Controls</h2>
+
+    <div class="ctrl-group">
+      <label>Formation Pattern</label>
+      <select id="c-pattern">
+        <option value="circle">Circle</option>
+        <option value="star">Star</option>
+        <option value="grid">Grid</option>
+        <option value="spiral">Spiral</option>
+        <option value="heart">Heart</option>
+        <option value="scatter">Free Roam</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Agent Count <span class="range-val" id="v-count">60</span></label>
+      <input type="range" id="c-count" min="10" max="150" value="60">
+    </div>
+
+    <div class="ctrl-group">
+      <label>Speed <span class="range-val" id="v-speed">50</span></label>
+      <input type="range" id="c-speed" min="10" max="100" value="50">
+    </div>
+
+    <div class="ctrl-group">
+      <label>Trail Length <span class="range-val" id="v-trail">40</span></label>
+      <input type="range" id="c-trail" min="0" max="80" value="40">
+    </div>
+
+    <div class="ctrl-group">
+      <label>Cohesion Force <span class="range-val" id="v-cohesion">60</span></label>
+      <input type="range" id="c-cohesion" min="0" max="100" value="60">
+    </div>
+
+    <div class="ctrl-group">
+      <label>Avoidance Radius <span class="range-val" id="v-avoid">30</span></label>
+      <input type="range" id="c-avoid" min="10" max="80" value="30">
+    </div>
+  </div>
+
+  <div id="legend">
+    <h3>🤖 Roles</h3>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b"></div>Leader — Pathfinder</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd93d"></div>Scout — Recon & Signal</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#6bcb77"></div>Worker — Formation Core</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4d96ff"></div>Relay — Communication</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#c084fc"></div>Guard — Perimeter Watch</div>
+  </div>
+
+  <div id="mode-badge"></div>
+</div>
+
+<script>
+// ─── Canvas Setup ──────────────────────────────────────────
+const mainCanvas = document.getElementById('main-canvas');
+const trailCanvas = document.getElementById('trail-canvas');
+const ctx = mainCanvas.getContext('2d');
+const tctx = trailCanvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  mainCanvas.width = trailCanvas.width = W;
+  mainCanvas.height = trailCanvas.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── Role Definitions ──────────────────────────────────────
+const ROLES = {
+  leader:  { color: '#ff6b6b', glow: 'rgba(255,107,107,0.35)', size: 7, trailAlpha: 0.6 },
+  scout:   { color: '#ffd93d', glow: 'rgba(255,217,61,0.30)',  size: 5.5, trailAlpha: 0.5 },
+  worker:  { color: '#6bcb77', glow: 'rgba(107,203,119,0.25)', size: 5, trailAlpha: 0.4 },
+  relay:   { color: '#4d96ff', glow: 'rgba(77,150,255,0.30)',  size: 5, trailAlpha: 0.45 },
+  guard:   { color: '#c084fc', glow: 'rgba(192,132,252,0.30)', size: 6, trailAlpha: 0.5 }
+};
+
+const ROLE_KEYS = Object.keys(ROLES);
+const ROLE_DISTRIBUTION = [
+  ...Array(2).fill('leader'),
+  ...Array(5).fill('scout'),
+  ...Array(15).fill('worker'),
+  ...Array(5).fill('relay'),
+  ...Array(5).fill('guard')
+];
+
+// ─── Controls ──────────────────────────────────────────────
+const controls = {
+  pattern:  document.getElementById('c-pattern'),
+  count:    document.getElementById('c-count'),
+  speed:    document.getElementById('c-speed'),
+  trail:    document.getElementById('c-trail'),
+  cohesion: document.getElementById('c-cohesion'),
+  avoid:    document.getElementById('c-avoid')
+};
+
+const vals = {
+  count:    document.getElementById('v-count'),
+  speed:    document.getElementById('v-speed'),
+  trail:    document.getElementById('v-trail'),
+  cohesion: document.getElementById('v-cohesion'),
+  avoid:    document.getElementById('v-avoid')
+};
+
+Object.keys(vals).forEach(k => {
+  controls[k].addEventListener('input', () => {
+    vals[k].textContent = controls[k].value;
+  });
+});
+
+controls.count.addEventListener('change', () => initAgents(+controls.count.value));
+controls.pattern.addEventListener('change', () => {
+  showBadge(controls.pattern.value.toUpperCase());
+});
+
+function showBadge(text) {
+  const badge = document.getElementById('mode-badge');
+  badge.textContent = text;
+  badge.style.opacity = 1;
+  setTimeout(() => badge.style.opacity = 0, 1200);
+}
+
+// ─── Formation Generators ──────────────────────────────────
+function getFormation(pattern, count) {
+  const cx = W / 2, cy = H / 2;
+  const r = Math.min(W, H) * 0.3;
+  const targets = [];
+
+  switch (pattern) {
+    case 'circle':
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        targets.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+      }
+      break;
+
+    case 'star': {
+      const points = 5;
+      for (let i = 0; i < count; i++) {
+        const idx = i % (points * 2);
+        const a = (idx / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+        const rad = idx % 2 === 0 ? r : r * 0.42;
+        const jitter = (i / count) * 0.15;
+        targets.push({
+          x: cx + Math.cos(a) * rad * (0.85 + jitter),
+          y: cy + Math.sin(a) * rad * (0.85 + jitter)
+        });
+      }
+      break;
+    }
+
+    case 'grid': {
+      const cols = Math.ceil(Math.sqrt(count * (W / H)));
+      const rows = Math.ceil(count / cols);
+      const spacing = Math.min(r * 2 / cols, r * 2 / rows);
+      const ox = cx - (cols - 1) * spacing / 2;
+      const oy = cy - (rows - 1) * spacing / 2;
+      for (let i = 0; i < count; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        targets.push({ x: ox + col * spacing, y: oy + row * spacing });
+      }
+      break;
+    }
+
+    case 'spiral':
+      for (let i = 0; i < count; i++) {
+        const t = i / count;
+        const a = t * Math.PI * 6;
+        const rad = t * r;
+        targets.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad });
+      }
+      break;
+
+    case 'heart':
+      for (let i = 0; i < count; i++) {
+        const t = (i / count) * Math.PI * 2;
+        const scale = r * 0.06;
+        const hx = 16 * Math.pow(Math.sin(t), 3);
+        const hy = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+        targets.push({ x: cx + hx * scale, y: cy + hy * scale });
+      }
+      break;
+
+    case 'scatter':
+      for (let i = 0; i < count; i++) {
+        targets.push({
+          x: Math.random() * W * 0.8 + W * 0.1,
+          y: Math.random() * H * 0.8 + H * 0.1
+        });
+      }
+      break;
+  }
+  return targets;
+}
+
+// ─── Agent Class ───────────────────────────────────────────
+class Agent {
+  constructor(x, y, role) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 2;
+    this.vy = (Math.random() - 0.5) * 2;
+    this.role = role;
+    this.roleData = ROLES[role];
+    this.trail = [];
+    this.targetX = x;
+    this.targetY = y;
+    this.angle = Math.random() * Math.PI * 2;
+    this.pulsePhase = Math.random() * Math.PI * 2;
+    this.communicating = false;
+    this.commTarget = null;
+    this.commTimer = 0;
+  }
+
+  setTarget(tx, ty) {
+    this.targetX = tx;
+    this.targetY = ty;
+  }
+}
+
+// ─── Swarm State ───────────────────────────────────────────
+let agents = [];
+let startTime = Date.now();
+let obstacles = [];
+
+function initAgents(count) {
+  const oldCount = agents.length;
+  if (count > oldCount) {
+    for (let i = oldCount; i < count; i++) {
+      const role = ROLE_DISTRIBUTION[i % ROLE_DISTRIBUTION.length];
+      agents.push(new Agent(
+        Math.random() * W,
+        Math.random() * H,
+        role
+      ));
+    }
+  } else {
+    agents.length = count;
+  }
+  assignTargets();
+}
+
+function assignTargets() {
+  const pattern = controls.pattern.value;
+  const targets = getFormation(pattern, agents.length);
+  agents.forEach((a, i) => {
+    if (targets[i]) a.setTarget(targets[i].x, targets[i].y);
+  });
+}
+
+// Click to place obstacles
+mainCanvas.addEventListener('click', (e) => {
+  obstacles.push({ x: e.clientX, y: e.clientY, r: 40, life: 600 });
+});
+
+// ─── Physics / Boids ───────────────────────────────────────
+function updateAgents(dt) {
+  const speedMul = +controls.speed.value / 50;
+  const cohesionStr = +controls.cohesion.value / 100;
+  const avoidRadius = +controls.avoid.value;
+  const trailLen = +controls.trail.value;
+  const pattern = controls.pattern.value;
+
+  const isFreeRoam = pattern === 'scatter';
+
+  agents.forEach((a, i) => {
+    let ax = 0, ay = 0;
+
+    // ── Seek target ──
+    if (!isFreeRoam) {
+      const dx = a.targetX - a.x;
+      const dy = a.targetY - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+      const seekForce = Math.min(dist * 0.003, 0.8) * cohesionStr;
+      ax += (dx / dist) * seekForce;
+      ay += (dy / dist) * seekForce;
+    }
+
+    // ── Boid rules: separation, alignment, cohesion ──
+    let sepX = 0, sepY = 0, sepCount = 0;
+    let aliVx = 0, aliVy = 0, aliCount = 0;
+    let cohX = 0, cohY = 0, cohCount = 0;
+
+    for (let j = 0; j < agents.length; j++) {
+      if (i === j) continue;
+      const b = agents[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Separation
+      if (dist < avoidRadius && dist > 0) {
+        sepX -= (dx / dist) * (avoidRadius - dist) / avoidRadius;
+        sepY -= (dy / dist) * (avoidRadius - dist) / avoidRadius;
+        sepCount++;
+      }
+
+      // Alignment + Cohesion (wider radius)
+      if (dist < avoidRadius * 3.5) {
+        aliVx += b.vx;
+        aliVy += b.vy;
+        aliCount++;
+        cohX += b.x;
+        cohY += b.y;
+        cohCount++;
+      }
+    }
+
+    if (sepCount > 0) {
+      ax += sepX * 1.8;
+      ay += sepY * 1.8;
+    }
+    if (aliCount > 0) {
+      ax += (aliVx / aliCount - a.vx) * 0.08;
+      ay += (aliVy / aliCount - a.vy) * 0.08;
+    }
+    if (cohCount > 0 && isFreeRoam) {
+      ax += ((cohX / cohCount) - a.x) * 0.001 * cohesionStr;
+      ay += ((cohY / cohCount) - a.y) * 0.001 * cohesionStr;
+    }
+
+    // ── Obstacle avoidance ──
+    obstacles.forEach(o => {
+      const dx = a.x - o.x;
+      const dy = a.y - o.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < o.r + avoidRadius) {
+        const force = (o.r + avoidRadius - dist) * 0.15;
+        ax += (dx / dist) * force;
+        ay += (dy / dist) * force;
+      }
+    });
+
+    // ── Wall avoidance ──
+    const wallMargin = 60;
+    if (a.x < wallMargin) ax += (wallMargin - a.x) * 0.02;
+    if (a.x > W - wallMargin) ax -= (a.x - (W - wallMargin)) * 0.02;
+    if (a.y < wallMargin) ay += (wallMargin - a.y) * 0.02;
+    if (a.y > H - wallMargin) ay -= (a.y - (H - wallMargin)) * 0.02;
+
+    // ── Free roam wander ──
+    if (isFreeRoam) {
+      a.angle += (Math.random() - 0.5) * 0.3;
+      ax += Math.cos(a.angle) * 0.15;
+      ay += Math.sin(a.angle) * 0.15;
+    }
+
+    // ── Role-specific behavior ──
+    switch (a.role) {
+      case 'leader':
+        // Leaders have stronger target seek
+        if (!isFreeRoam) {
+          const dx = a.targetX - a.x;
+          const dy = a.targetY - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+          ax += (dx / dist) * 0.3;
+          ay += (dy / dist) * 0.3;
+        }
+        break;
+      case 'scout':
+        // Scouts wander slightly more
+        a.angle += (Math.random() - 0.5) * 0.15;
+        ax += Math.cos(a.angle) * 0.06;
+        ay += Math.sin(a.angle) * 0.06;
+        break;
+      case 'guard':
+        // Guards slightly orbit their target
+        if (!isFreeRoam) {
+          const dx = a.targetX - a.x;
+          const dy = a.targetY - a.y;
+          ax += -dy * 0.0004;
+          ay += dx * 0.0004;
+        }
+        break;
+    }
+
+    // ── Apply forces ──
+    a.vx += ax * dt;
+    a.vy += ay * dt;
+
+    // Speed limit
+    const maxSpeed = (a.role === 'leader' ? 3.2 : a.role === 'scout' ? 3.5 : 2.5) * speedMul;
+    const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+    if (speed > maxSpeed) {
+      a.vx = (a.vx / speed) * maxSpeed;
+      a.vy = (a.vy / speed) * maxSpeed;
+    }
+
+    // Damping
+    a.vx *= 0.985;
+    a.vy *= 0.985;
+
+    a.x += a.vx * dt;
+    a.y += a.vy * dt;
+
+    // Trail
+    a.trail.push({ x: a.x, y: a.y });
+    if (a.trail.length > trailLen) a.trail.shift();
+
+    // Pulse
+    a.pulsePhase += dt * 0.05;
+
+    // Communication lines (random relay events)
+    if (a.role === 'relay' && Math.random() < 0.005) {
+      const nearby = agents.filter((b, bi) => bi !== i && dist2d(a, b) < 150);
+      if (nearby.length > 0) {
+        a.communicating = true;
+        a.commTarget = nearby[Math.floor(Math.random() * nearby.length)];
+        a.commTimer = 40;
+      }
+    }
+    if (a.commTimer > 0) a.commTimer--;
+    else a.communicating = false;
+  });
+
+  // Update obstacles
+  obstacles.forEach(o => o.life--);
+  obstacles = obstacles.filter(o => o.life > 0);
+}
+
+function dist2d(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+// ─── Rendering ─────────────────────────────────────────────
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(40, 50, 80, 0.15)';
+  ctx.lineWidth = 1;
+  const step = 60;
+  for (let x = 0; x < W; x += step) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += step) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+}
+
+function drawTrails() {
+  // Fade existing trails
+  tctx.fillStyle = 'rgba(10, 10, 26, 0.06)';
+  tctx.fillRect(0, 0, W, H);
+
+  agents.forEach(a => {
+    if (a.trail.length < 2) return;
+    const rd = a.roleData;
+
+    for (let i = 1; i < a.trail.length; i++) {
+      const t = i / a.trail.length;
+      const p0 = a.trail[i - 1];
+      const p1 = a.trail[i];
+
+      tctx.beginPath();
+      tctx.moveTo(p0.x, p0.y);
+      tctx.lineTo(p1.x, p1.y);
+      tctx.strokeStyle = rd.color;
+      tctx.globalAlpha = t * rd.trailAlpha * 0.35;
+      tctx.lineWidth = Math.max(1, t * 2.5);
+      tctx.stroke();
+    }
+  });
+  tctx.globalAlpha = 1;
+}
+
+function drawAgents(time) {
+  agents.forEach(a => {
+    const rd = a.roleData;
+    const pulse = 1 + Math.sin(a.pulsePhase) * 0.15;
+    const size = rd.size * pulse;
+
+    // Glow
+    const grad = ctx.createRadialGradient(a.x, a.y, 0, a.x, a.y, size * 4);
+    grad.addColorStop(0, rd.glow);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, size * 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body — directional triangle
+    const angle = Math.atan2(a.vy, a.vx);
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(angle);
+
+    ctx.beginPath();
+    ctx.moveTo(size * 1.6, 0);
+    ctx.lineTo(-size, -size * 0.9);
+    ctx.lineTo(-size * 0.4, 0);
+    ctx.lineTo(-size, size * 0.9);
+    ctx.closePath();
+    ctx.fillStyle = rd.color;
+    ctx.shadowColor = rd.color;
+    ctx.shadowBlur = 10;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Eye dot
+    ctx.beginPath();
+    ctx.arc(size * 0.5, 0, size * 0.25, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    ctx.restore();
+
+    // Leader crown indicator
+    if (a.role === 'leader') {
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, size * 2.5, 0, Math.PI * 2);
+      ctx.strokeStyle = rd.color;
+      ctx.globalAlpha = 0.25 + Math.sin(a.pulsePhase * 2) * 0.15;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Communication beam
+    if (a.communicating && a.commTarget) {
+      const t = a.commTarget;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(t.x, t.y);
+      const alpha = a.commTimer / 40;
+      ctx.strokeStyle = `rgba(77, 150, 255, ${alpha * 0.4})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Pulse dot along line
+      const progress = 1 - a.commTimer / 40;
+      const px = a.x + (t.x - a.x) * progress;
+      const py = a.y + (t.y - a.y) * progress;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(77, 150, 255, ${alpha})`;
+      ctx.fill();
+    }
+  });
+}
+
+function drawObstacles() {
+  obstacles.forEach(o => {
+    const alpha = Math.min(1, o.life / 100);
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255, 80, 80, ${alpha * 0.08})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 80, 80, ${alpha * 0.5})`;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // X mark
+    ctx.strokeStyle = `rgba(255, 80, 80, ${alpha * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(o.x - 8, o.y - 8); ctx.lineTo(o.x + 8, o.y + 8);
+    ctx.moveTo(o.x + 8, o.y - 8); ctx.lineTo(o.x - 8, o.y + 8);
+    ctx.stroke();
+  });
+}
+
+function drawTargetMarkers() {
+  if (controls.pattern.value === 'scatter') return;
+  ctx.globalAlpha = 0.12;
+  agents.forEach(a => {
+    ctx.beginPath();
+    ctx.arc(a.targetX, a.targetY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = a.roleData.color;
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ─── Stats ─────────────────────────────────────────────────
+function updateStats() {
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  let totalSpeed = 0;
+  let totalDist = 0;
+
+  agents.forEach(a => {
+    totalSpeed += Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+    totalDist += dist2d(a, { x: a.targetX, y: a.targetY });
+  });
+
+  const avgSpeed = (totalSpeed / agents.length).toFixed(1);
+  const avgDist = totalDist / agents.length;
+  const cohesion = Math.max(0, Math.min(100, 100 - avgDist * 0.3)).toFixed(0);
+
+  document.getElementById('s-agents').textContent = agents.length;
+  document.getElementById('s-speed').textContent = avgSpeed;
+  document.getElementById('s-cohesion').textContent = cohesion + '%';
+  document.getElementById('s-formation').textContent = controls.pattern.value;
+  document.getElementById('s-time').textContent = elapsed + 's';
+}
+
+// ─── Main Loop ─────────────────────────────────────────────
+let lastTime = performance.now();
+let statsTimer = 0;
+
+function loop(now) {
+  const rawDt = (now - lastTime) / 16.667; // normalize to ~60fps
+  const dt = Math.min(rawDt, 3);
+  lastTime = now;
+
+  // Clear main canvas
+  ctx.clearRect(0, 0, W, H);
+
+  drawGrid();
+  updateAgents(dt);
+  drawTrails();
+  drawTargetMarkers();
+  drawObstacles();
+  drawAgents(now);
+
+  statsTimer += dt;
+  if (statsTimer > 10) {
+    updateStats();
+    statsTimer = 0;
+  }
+
+  // Re-assign targets periodically for scatter mode
+  if (controls.pattern.value === 'scatter' && Math.random() < 0.003) {
+    assignTargets();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// ─── Auto-cycle formations ─────────────────────────────────
+const formations = ['circle', 'star', 'grid', 'spiral', 'heart', 'scatter'];
+let currentFormIdx = 0;
+
+setInterval(() => {
+  currentFormIdx = (currentFormIdx + 1) % formations.length;
+  controls.pattern.value = formations[currentFormIdx];
+  assignTargets();
+  showBadge(formations[currentFormIdx].toUpperCase());
+}, 8000);
+
+// ─── Init ──────────────────────────────────────────────────
+initAgents(60);
+showBadge('CIRCLE');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

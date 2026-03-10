@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Swarm Robotics Animation</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --grid: rgba(255,255,255,0.05);
+      --text: #d8defa;
+      --leader: #ffd166;
+      --builder: #06d6a0;
+      --scout: #4cc9f0;
+      --guardian: #ef476f;
+      --target: #f72585;
+    }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(1200px 800px at 20% 10%, #1b2550 0%, var(--bg) 55%);
+      color: var(--text);
+      font-family: Inter, system-ui, Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #ui {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      background: rgba(8, 12, 28, 0.72);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      z-index: 10;
+      max-width: 360px;
+    }
+
+    #ui b { color: #ffffff; }
+    #ui .legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(140px, 1fr));
+      gap: 6px 10px;
+      margin-top: 6px;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+
+    #hint {
+      position: fixed;
+      right: 12px;
+      bottom: 10px;
+      font-size: 12px;
+      opacity: 0.8;
+      background: rgba(8, 12, 28, 0.55);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 6px 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div><b>Swarm Robotics</b> — alignment, collision avoidance, role-based coordination</div>
+    <div id="phaseText">Phase: Initializing...</div>
+    <div class="legend">
+      <div><span class="dot" style="background:var(--leader)"></span>Leader</div>
+      <div><span class="dot" style="background:var(--builder)"></span>Builders (formation)</div>
+      <div><span class="dot" style="background:var(--scout)"></span>Scouts (target seeking)</div>
+      <div><span class="dot" style="background:var(--guardian)"></span>Guardians (boundary control)</div>
+    </div>
+  </div>
+  <div id="hint">Click to move target • Press <b>Space</b> to switch phase</div>
+  <canvas id="sim"></canvas>
+
+  <script>
+    const canvas = document.getElementById("sim");
+    const ctx = canvas.getContext("2d");
+    const phaseText = document.getElementById("phaseText");
+
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+
+    const TAU = Math.PI * 2;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const rand = (a, b) => a + Math.random() * (b - a);
+
+    function vec(x=0, y=0){ return {x, y}; }
+    function add(a,b){ return {x:a.x+b.x, y:a.y+b.y}; }
+    function sub(a,b){ return {x:a.x-b.x, y:a.y-b.y}; }
+    function mul(a,s){ return {x:a.x*s, y:a.y*s}; }
+    function mag(v){ return Math.hypot(v.x, v.y); }
+    function norm(v){ const m=mag(v)||1; return {x:v.x/m, y:v.y/m}; }
+    function limit(v, m){
+      const k = mag(v);
+      if(k > m) return mul(v, m/k);
+      return v;
+    }
+
+    const COLORS = {
+      leader: "#ffd166",
+      builder: "#06d6a0",
+      scout: "#4cc9f0",
+      guardian: "#ef476f",
+      target: "#f72585",
+      trail: "rgba(255,255,255,0.05)"
+    };
+
+    const roleConfig = {
+      leader:   { maxSpeed: 2.5, maxForce: 0.08, size: 6, color: COLORS.leader },
+      builder:  { maxSpeed: 2.2, maxForce: 0.09, size: 4.8, color: COLORS.builder },
+      scout:    { maxSpeed: 3.0, maxForce: 0.12, size: 4.2, color: COLORS.scout },
+      guardian: { maxSpeed: 2.4, maxForce: 0.10, size: 5.0, color: COLORS.guardian }
+    };
+
+    const swarm = [];
+    const N = 72;
+
+    const target = { x: W * 0.75, y: H * 0.5, r: 16 };
+    const obstacle = { x: W * 0.5, y: H * 0.5, r: Math.min(W,H)*0.09 };
+
+    const phases = [
+      { name: "Circle Formation", duration: 9000 },
+      { name: "Arrow Formation (Navigate to Target)", duration: 10000 },
+      { name: "Grid Sweep", duration: 10000 }
+    ];
+    let phaseIndex = 0;
+    let phaseTime = 0;
+
+    class Agent {
+      constructor(i, role){
+        this.i = i;
+        this.role = role;
+        this.p = vec(rand(60, W-60), rand(60, H-60));
+        this.v = vec(rand(-1,1), rand(-1,1));
+        this.a = vec(0,0);
+        this.trail = [];
+      }
+
+      cfg(){ return roleConfig[this.role]; }
+
+      applyForce(f){ this.a = add(this.a, f); }
+
+      neighbors(radius){
+        const out = [];
+        const r2 = radius * radius;
+        for (const other of swarm){
+          if (other === this) continue;
+          const dx = other.p.x - this.p.x;
+          const dy = other.p.y - this.p.y;
+          if (dx*dx + dy*dy < r2) out.push(other);
+        }
+        return out;
+      }
+
+      seek(targetPos, weight=1){
+        const desired = sub(targetPos, this.p);
+        const d = mag(desired);
+        let speed = this.cfg().maxSpeed;
+        if (d < 100) speed = speed * (d / 100); // smooth arrival
+        const steer = sub(mul(norm(desired), speed), this.v);
+        return mul(limit(steer, this.cfg().maxForce), weight);
+      }
+
+      align(neis){
+        if (!neis.length) return vec(0,0);
+        let avg = vec(0,0);
+        for (const n of neis) avg = add(avg, n.v);
+        avg = mul(avg, 1 / neis.length);
+        const desired = mul(norm(avg), this.cfg().maxSpeed);
+        const steer = sub(desired, this.v);
+        return limit(steer, this.cfg().maxForce);
+      }
+
+      cohesion(neis){
+        if (!neis.length) return vec(0,0);
+        let center = vec(0,0);
+        for (const n of neis) center = add(center, n.p);
+        center = mul(center, 1 / neis.length);
+        return this.seek(center, 1.0);
+      }
+
+      separation(neis){
+        if (!neis.length) return vec(0,0);
+        let rep = vec(0,0);
+        let count = 0;
+        for (const n of neis){
+          const diff = sub(this.p, n.p);
+          const d = mag(diff);
+          if (d > 0 && d < 34){
+            rep = add(rep, mul(norm(diff), 1 / d));
+            count++;
+          }
+        }
+        if (!count) return vec(0,0);
+        rep = mul(rep, 1 / count);
+        const desired = mul(norm(rep), this.cfg().maxSpeed);
+        const steer = sub(desired, this.v);
+        return limit(steer, this.cfg().maxForce * 1.5);
+      }
+
+      avoidObstacle(){
+        const diff = sub(this.p, obstacle);
+        const d = mag(diff);
+        const safe = obstacle.r + 34;
+        if (d < safe){
+          const strength = (safe - d) / safe;
+          return mul(norm(diff), this.cfg().maxForce * 3.0 * strength);
+        }
+        return vec(0,0);
+      }
+
+      boundaryForce(){
+        const margin = 40;
+        let fx = 0, fy = 0;
+        if (this.p.x < margin) fx = (margin - this.p.x) / margin;
+        else if (this.p.x > W - margin) fx = -((this.p.x - (W - margin)) / margin);
+        if (this.p.y < margin) fy = (margin - this.p.y) / margin;
+        else if (this.p.y > H - margin) fy = -((this.p.y - (H - margin)) / margin);
+        return mul(vec(fx, fy), this.cfg().maxForce * 2.2);
+      }
+
+      formationPoint(){
+        // role-aware formation anchors per phase
+        const center = vec(W*0.5, H*0.52);
+        const t = performance.now() * 0.001;
+
+        if (phaseIndex === 0){
+          // circle around moving leader path
+          const leaderPos = vec(W*0.5 + Math.cos(t*0.5)*W*0.18, H*0.5 + Math.sin(t*0.7)*H*0.14);
+          if (this.role === "leader") return leaderPos;
+
+          const idx = this.i;
+          const angle = (idx / N) * TAU;
+          const ringR = this.role === "guardian" ? 170 : this.role === "builder" ? 130 : 95;
+          return add(leaderPos, vec(Math.cos(angle)*ringR, Math.sin(angle)*ringR));
+        }
+
+        if (phaseIndex === 1){
+          // arrow pointed toward target
+          const dir = norm(sub(target, center));
+          const perp = vec(-dir.y, dir.x);
+
+          if (this.role === "leader"){
+            return add(center, mul(dir, 140));
+          }
+          if (this.role === "guardian"){
+            const side = (this.i % 2 === 0) ? 1 : -1;
+            const d = 160 + (this.i % 6) * 18;
+            return add(center, add(mul(dir, -d*0.2), mul(perp, side * d * 0.65)));
+          }
+          if (this.role === "scout"){
+            const lane = (this.i % 3) - 1;
+            const d = 40 + (this.i % 10) * 16;
+            return add(center, add(mul(dir, d), mul(perp, lane * 28)));
+          }
+          // builder: shaft of arrow
+          const row = this.i % 14;
+          const lane = ((this.i / 14) | 0) % 2 ? -1 : 1;
+          return add(center, add(mul(dir, -20 - row*20), mul(perp, lane*18)));
+        }
+
+        // phase 2: grid sweep heading toward target
+        const cols = 12;
+        const spacing = 36;
+        const id = this.i;
+        const cx = (id % cols) - (cols-1)/2;
+        const cy = Math.floor(id / cols) - 2.5;
+        const drift = vec(Math.sin(t*0.8)*50, Math.cos(t*0.6)*30);
+        return add(add(center, drift), vec(cx*spacing, cy*spacing));
+      }
+
+      update(dt){
+        const neis = this.neighbors(74);
+
+        // Core flocking terms
+        const ali = this.align(neis);
+        const coh = this.cohesion(neis);
+        const sep = this.separation(neis);
+
+        // Role weight tuning
+        const roleW = {
+          leader:   { ali:0.5, coh:0.4, sep:1.4, form:1.8, seekT:0.2 },
+          builder:  { ali:1.0, coh:0.9, sep:1.3, form:1.5, seekT:0.4 },
+          scout:    { ali:0.8, coh:0.5, sep:1.2, form:1.0, seekT:1.2 },
+          guardian: { ali:1.1, coh:0.8, sep:1.6, form:1.3, seekT:0.3 }
+        }[this.role];
+
+        this.applyForce(mul(ali, roleW.ali));
+        this.applyForce(mul(coh, roleW.coh));
+        this.applyForce(mul(sep, roleW.sep));
+
+        // Formation objective
+        const fPoint = this.formationPoint();
+        this.applyForce(mul(this.seek(fPoint, 1), roleW.form));
+
+        // Global target objective (strongest in scouts)
+        this.applyForce(mul(this.seek(target, 1), roleW.seekT));
+
+        // Collision avoidance: obstacle + boundaries
+        this.applyForce(this.avoidObstacle());
+        this.applyForce(this.boundaryForce());
+
+        // Integrate
+        this.v = add(this.v, mul(this.a, dt * 60));
+        this.v = limit(this.v, this.cfg().maxSpeed);
+        this.p = add(this.p, mul(this.v, dt * 60));
+        this.a = vec(0,0);
+
+        // trails
+        this.trail.push({x:this.p.x, y:this.p.y});
+        if (this.trail.length > 28) this.trail.shift();
+      }
+
+      drawTrail(){
+        if (this.trail.length < 2) return;
+        ctx.beginPath();
+        for (let i=0; i<this.trail.length; i++){
+          const p = this.trail[i];
+          if (i===0) ctx.moveTo(p.x,p.y);
+          else ctx.lineTo(p.x,p.y);
+        }
+        const c = this.cfg().color;
+        ctx.strokeStyle = c + "55";
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+      }
+
+      draw(){
+        const c = this.cfg().color;
+        const ang = Math.atan2(this.v.y, this.v.x);
+        const s = this.cfg().size;
+
+        ctx.save();
+        ctx.translate(this.p.x, this.p.y);
+        ctx.rotate(ang);
+
+        // body triangle
+        ctx.beginPath();
+        ctx.moveTo(s*1.5, 0);
+        ctx.lineTo(-s, s*0.9);
+        ctx.lineTo(-s, -s*0.9);
+        ctx.closePath();
+        ctx.fillStyle = c;
+        ctx.globalAlpha = 0.95;
+        ctx.fill();
+
+        // halo
+        ctx.beginPath();
+        ctx.arc(0,0,s*1.9,0,TAU);
+        ctx.strokeStyle = c + "88";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+
+    function initSwarm(){
+      swarm.length = 0;
+      const roles = [];
+      roles.push("leader");
+      for(let i=0;i<36;i++) roles.push("builder");
+      for(let i=0;i<20;i++) roles.push("scout");
+      for(let i=0;i<15;i++) roles.push("guardian");
+
+      // ensure exactly N
+      while (roles.length < N) roles.push("builder");
+      roles.length = N;
+
+      // shuffle roles (except first leader fixed)
+      for(let i=1;i<roles.length;i++){
+        const j = 1 + Math.floor(Math.random()*(roles.length-1));
+        [roles[i], roles[j]] = [roles[j], roles[i]];
+      }
+
+      for(let i=0;i<N;i++){
+        swarm.push(new Agent(i, roles[i]));
+      }
+    }
+
+    function drawGrid(){
+      const step = 42;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 1;
+      for(let x=0; x<W; x+=step){
+        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+      }
+      for(let y=0; y<H; y+=step){
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawTargetAndObstacle(){
+      // target
+      ctx.beginPath();
+      ctx.arc(target.x, target.y, target.r, 0, TAU);
+      ctx.fillStyle = COLORS.target + "AA";
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(target.x, target.y, target.r + 12, 0, TAU);
+      ctx.strokeStyle = COLORS.target + "66";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // obstacle
+      ctx.beginPath();
+      ctx.arc(obstacle.x, obstacle.y, obstacle.r, 0, TAU);
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function stepPhase(dtMs){
+      phaseTime += dtMs;
+      const phase = phases[phaseIndex];
+      if (phaseTime >= phase.duration){
+        phaseTime = 0;
+        phaseIndex = (phaseIndex + 1) % phases.length;
+      }
+      phaseText.textContent = `Phase: ${phases[phaseIndex].name}`;
+    }
+
+    let last = performance.now();
+    function loop(now){
+      const dt = Math.min(0.033, (now - last)/1000);
+      last = now;
+
+      stepPhase(dt * 1000);
+
+      ctx.clearRect(0,0,W,H);
+      drawGrid();
+      drawTargetAndObstacle();
+
+      // trails first
+      for (const a of swarm) a.drawTrail();
+
+      // update then draw
+      for (const a of swarm) a.update(dt);
+      for (const a of swarm) a.draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("resize", () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      obstacle.x = W * 0.5;
+      obstacle.y = H * 0.5;
+      obstacle.r = Math.min(W,H)*0.09;
+    });
+
+    window.addEventListener("click", (e) => {
+      target.x = e.clientX;
+      target.y = e.clientY;
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space"){
+        phaseIndex = (phaseIndex + 1) % phases.length;
+        phaseTime = 0;
+      }
+    });
+
+    initSwarm();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

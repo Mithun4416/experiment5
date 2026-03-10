@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fractal Tree Growing from a Seed</title>
+  <style>
+    :root {
+      --sky-top: #dff6ff;
+      --sky-bottom: #f8fff1;
+      --ground-top: #7bb36a;
+      --ground-bottom: #4d7d43;
+      --wood: #5c3b24;
+      --wood-dark: #3f2818;
+      --leaf-1: #86d96a;
+      --leaf-2: #4fbf68;
+      --leaf-3: #b8f28f;
+      --seed: #6b4423;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: linear-gradient(to bottom, var(--sky-top), var(--sky-bottom) 68%, #d9f0c1 68%);
+      font-family: system-ui, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .info {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(8px);
+      color: #234;
+      font-size: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      user-select: none;
+    }
+
+    .info strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div class="info">
+    <strong>Fractal Tree</strong>
+    Growing from a seed • recursive branching • swaying leaves<br />
+    Click to regrow
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let w = 0;
+    let h = 0;
+    let dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+    let branches = [];
+    let leaves = [];
+    let startTime = 0;
+    let totalGrowDuration = 0;
+    let seedPulse = 0;
+
+    const config = {
+      maxDepth: 9,
+      baseLength: 95,
+      lengthDecay: 0.72,
+      baseThickness: 12,
+      thicknessDecay: 0.74,
+      branchAngle: Math.PI / 5.2,
+      angleJitter: 0.14,
+      splitDelay: 0.18,
+      growPerBranch: 0.52,
+      swayAmplitude: 0.08,
+      swaySpeed: 0.0012,
+      leafSize: 7,
+      leafAppearDelay: 0.12
+    };
+
+    function resize() {
+      w = window.innerWidth;
+      h = window.innerHeight;
+      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      config.baseLength = Math.min(115, h * 0.16);
+      config.baseThickness = Math.max(10, h * 0.014);
+
+      buildTree();
+    }
+
+    function rand(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function easeInOutSine(t) {
+      return -(Math.cos(Math.PI * t) - 1) / 2;
+    }
+
+    function branchColor(depth) {
+      const t = depth / config.maxDepth;
+      const r = Math.round(92 - t * 20);
+      const g = Math.round(59 + t * 12);
+      const b = Math.round(36 + t * 10);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function leafColor() {
+      const colors = ["#86d96a", "#4fbf68", "#b8f28f", "#79cf5d"];
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    function buildTree() {
+      branches = [];
+      leaves = [];
+      startTime = performance.now();
+      seedPulse = 0;
+
+      const rootX = w / 2;
+      const rootY = h * 0.84;
+
+      let maxEnd = 0;
+
+      function createBranch(x, y, length, angle, depth, thickness, startAt) {
+        const id = branches.length;
+        const branch = {
+          id,
+          x,
+          y,
+          length,
+          angle,
+          depth,
+          thickness,
+          startAt,
+          endAt: startAt + config.growPerBranch,
+          children: []
+        };
+        branches.push(branch);
+        maxEnd = Math.max(maxEnd, branch.endAt);
+
+        if (depth >= config.maxDepth || length < 9) {
+          const tipX = x + Math.cos(angle) * length;
+          const tipY = y + Math.sin(angle) * length;
+          leaves.push({
+            x: tipX,
+            y: tipY,
+            depth,
+            appearAt: branch.endAt + config.leafAppearDelay + rand(0, 0.25),
+            size: rand(config.leafSize * 0.75, config.leafSize * 1.5),
+            rotation: rand(-Math.PI, Math.PI),
+            swayOffset: rand(0, Math.PI * 2),
+            color: leafColor()
+          });
+          return;
+        }
+
+        const nextLength = length * rand(config.lengthDecay - 0.03, config.lengthDecay + 0.02);
+        const nextThickness = Math.max(1.2, thickness * config.thicknessDecay);
+
+        const childStart = branch.endAt - 0.03 + config.splitDelay * (depth * 0.12);
+
+        const splitCount = depth > config.maxDepth - 3 ? 2 : (Math.random() < 0.28 ? 3 : 2);
+
+        const spread = config.branchAngle + rand(-config.angleJitter, config.angleJitter);
+
+        const baseChildren = [
+          angle - spread,
+          angle + spread
+        ];
+
+        if (splitCount === 3) {
+          baseChildren.push(angle + rand(-0.22, 0.22));
+        }
+
+        for (const childAngle of baseChildren) {
+          const tipX = x + Math.cos(angle) * length;
+          const tipY = y + Math.sin(angle) * length;
+          const child = createBranch(
+            tipX,
+            tipY,
+            nextLength * rand(0.92, 1.06),
+            childAngle + rand(-0.06, 0.06),
+            depth + 1,
+            nextThickness,
+            childStart + rand(0, 0.12)
+          );
+          branch.children.push(child);
+        }
+
+        return branch;
+      }
+
+      createBranch(
+        rootX,
+        rootY,
+        config.baseLength,
+        -Math.PI / 2,
+        0,
+        config.baseThickness,
+        0.3
+      );
+
+      totalGrowDuration = maxEnd + 2.6;
+    }
+
+    function drawBackground(time) {
+      const sky = ctx.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, "#dff6ff");
+      sky.addColorStop(0.62, "#f8fff1");
+      sky.addColorStop(0.621, "#9dd184");
+      sky.addColorStop(1, "#4f7d43");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, h);
+
+      const groundY = h * 0.84;
+      const drift = Math.sin(time * 0.00015) * 8;
+
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      ctx.arc(w * 0.2, h * 0.18, 55 + Math.sin(time * 0.0003) * 4, 0, Math.PI * 2);
+      ctx.arc(w * 0.26, h * 0.16, 40, 0, Math.PI * 2);
+      ctx.arc(w * 0.145, h * 0.16, 36, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(w * 0.76, h * 0.22, 48 + Math.cos(time * 0.00027) * 4, 0, Math.PI * 2);
+      ctx.arc(w * 0.81, h * 0.2, 34, 0, Math.PI * 2);
+      ctx.arc(w * 0.72, h * 0.2, 30, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#5f8b4e";
+      ctx.beginPath();
+      ctx.moveTo(0, groundY);
+      ctx.quadraticCurveTo(w * 0.25, groundY - 20 + drift, w * 0.5, groundY + 6);
+      ctx.quadraticCurveTo(w * 0.75, groundY + 24 - drift, w, groundY - 10);
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(0,0,0,0.05)";
+      ctx.beginPath();
+      ctx.ellipse(w / 2, groundY + 8, 76, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawSeed(elapsed) {
+      const rootX = w / 2;
+      const rootY = h * 0.84;
+      const t = clamp(elapsed / 0.7, 0, 1);
+      const pop = easeOutCubic(t);
+      seedPulse += 0.05;
+
+      const scale = 0.85 + pop * 0.25 + Math.sin(seedPulse) * 0.02;
+
+      ctx.save();
+      ctx.translate(rootX, rootY + 4);
+      ctx.scale(scale, scale);
+      ctx.rotate(-0.2);
+
+      ctx.fillStyle = "#6b4423";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 10, 7, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.beginPath();
+      ctx.ellipse(-2, -2, 3.5, 1.8, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawBranch(branch, elapsed, time) {
+      const local = clamp((elapsed - branch.startAt) / config.growPerBranch, 0, 1);
+      if (local <= 0) return;
+
+      const growth = easeOutCubic(local);
+
+      const swayFactor = Math.max(0, 1 - branch.depth / (config.maxDepth + 1));
+      const wind =
+        Math.sin(time * config.swaySpeed + branch.depth * 0.65 + branch.x * 0.01) *
+        config.swayAmplitude *
+        swayFactor;
+
+      const currentAngle = branch.angle + wind;
+      const ex = branch.x + Math.cos(currentAngle) * branch.length * growth;
+      const ey = branch.y + Math.sin(currentAngle) * branch.length * growth;
+
+      ctx.strokeStyle = branchColor(branch.depth);
+      ctx.lineWidth = branch.thickness * (0.82 + 0.18 * growth);
+      ctx.lineCap = "round";
+
+      ctx.beginPath();
+      ctx.moveTo(branch.x, branch.y);
+
+      const mx = branch.x + Math.cos(currentAngle - 0.08) * branch.length * 0.55 * growth;
+      const my = branch.y + Math.sin(currentAngle - 0.08) * branch.length * 0.55 * growth;
+
+      ctx.quadraticCurveTo(mx, my, ex, ey);
+      ctx.stroke();
+    }
+
+    function drawLeaves(elapsed, time) {
+      for (const leaf of leaves) {
+        const t = clamp((elapsed - leaf.appearAt) / 0.5, 0, 1);
+        if (t <= 0) continue;
+
+        const grow = easeInOutSine(t);
+        const sway =
+          Math.sin(time * 0.0018 + leaf.swayOffset + leaf.y * 0.03) * 0.28;
+
+        ctx.save();
+        ctx.translate(leaf.x, leaf.y);
+        ctx.rotate(leaf.rotation + sway);
+        ctx.scale(grow, grow);
+
+        ctx.fillStyle = leaf.color;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(leaf.size * 0.9, -leaf.size * 0.7, 0, -leaf.size * 1.8);
+        ctx.quadraticCurveTo(-leaf.size * 0.9, -leaf.size * 0.7, 0, 0);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, -leaf.size * 1.55);
+        ctx.lineTo(0, -1);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+
+    function drawSprout(elapsed, time) {
+      const t = clamp((elapsed - 0.05) / 0.8, 0, 1);
+      if (t <= 0) return;
+
+      const rootX = w / 2;
+      const rootY = h * 0.84 + 2;
+      const len = 18 * easeOutCubic(t);
+      const sway = Math.sin(time * 0.002) * 0.08;
+
+      ctx.strokeStyle = "#5aa84d";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(rootX, rootY);
+      ctx.quadraticCurveTo(rootX + 3, rootY - len * 0.55, rootX + sway * 16, rootY - len);
+      ctx.stroke();
+    }
+
+    function animate(time) {
+      const elapsed = (time - startTime) / 1000;
+
+      drawBackground(time);
+      drawSeed(elapsed);
+      drawSprout(elapsed, time);
+
+      for (const branch of branches) {
+        drawBranch(branch, elapsed, time);
+      }
+
+      drawLeaves(elapsed, time);
+
+      if (elapsed > totalGrowDuration) {
+        // keep animating for swaying motion
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("click", buildTree);
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
